@@ -21,6 +21,7 @@
 #include "sr_protocol.h"
 #include "sr_arpcache.h"
 #include "sr_utils.h"
+#include "set_data.h"
 
 /*---------------------------------------------------------------------
  * Method: sr_init(void)
@@ -109,42 +110,20 @@ void sr_handlepacket(struct sr_instance* sr,
             while (iface != NULL) {
                 /* target is me */
                 if (tip == ntohl(iface->ip)) {
-                    /* Arp */
-                    sr_arp_hdr_t* arp_response = (sr_arp_hdr_t*)malloc(sizeof(sr_arp_hdr_t));		
-                    arp_response->ar_hrd = arp_hdr->ar_hrd;
-                    arp_response->ar_pro = arp_hdr->ar_pro;
-                    arp_response->ar_hln = arp_hdr->ar_hln;
-                    arp_response->ar_pln = arp_hdr->ar_pln;
-                    arp_response->ar_op = htons(arp_op_reply);
-                    int i;
-                    for (i = 0; i < ETHER_ADDR_LEN; i++)
-                        arp_response->ar_sha[i] = iface->addr[i];
-                    arp_response->ar_sip = iface->ip;
-                    for (i = 0; i < ETHER_ADDR_LEN; i++)
-                        arp_response->ar_tha[i] = arp_hdr->ar_sha[i];
-                    arp_response->ar_tip = arp_hdr->ar_sip;
-
-                    /* Ethernet */
-                    sr_ethernet_hdr_t* ether_response = (sr_ethernet_hdr_t*)malloc(sizeof(sr_ethernet_hdr_t));
-                    for (i = 0; i < ETHER_ADDR_LEN; i++)
-                        ether_response->ether_dhost[i] = arp_hdr->ar_sha[i];
-                    for (i = 0; i < ETHER_ADDR_LEN; i++)
-                        ether_response->ether_shost[i] = iface->addr[i];
-                    ether_response->ether_type = ehdr->ether_type;
-
-                    /* merge */
-                    char* response = (char*)malloc(len_ether_arp);
-                    memcpy(response, ether_response, sizeof(sr_ethernet_hdr_t));
-                    memcpy(response + sizeof(sr_ethernet_hdr_t), arp_response, sizeof(sr_arp_hdr_t));
-                    free(ether_response);
-                    free(arp_response);
+                    uint8_t* arp_reply_frame = (uint8_t*)malloc(ETHER_HDR_LEN + ARP_HDR_LEN);
+                    /* ethernet */
+                    set_ether_hdr(arp_reply_frame, arp_hdr->ar_sha, iface->addr, ehdr->ether_type);
+                    /* arp */
+                    set_arp_hdr(arp_reply_frame + ETHER_HDR_LEN, arp_hdr->ar_hrd, arp_hdr->ar_pro, \
+                                arp_hdr->ar_hln, arp_hdr->ar_pln, htons(arp_op_reply), \
+                                iface->addr, iface->ip, arp_hdr->ar_sha, arp_hdr->ar_sip);
 
                     printf("print my header\n");
-                    print_hdrs(response, len_ether_arp);
+                    print_hdrs(arp_reply_frame, len_ether_arp);
                     printf("interface: %s\n", interface);
 
                     printf("===SENDING===\n");
-                    sr_send_packet(sr, response, len_ether_arp, interface);
+                    sr_send_packet(sr, arp_reply_frame, len_ether_arp, interface);
                     break;
                 }
                 iface = iface->next;
@@ -158,7 +137,7 @@ void sr_handlepacket(struct sr_instance* sr,
             while (iface != NULL) {
                 /* target is me */
                 if (tip == iface->ip) {
-                    ;
+                    printf("Arp reply on me...\n");
                     break;
                 }
                 iface = iface->next;
@@ -173,7 +152,33 @@ void sr_handlepacket(struct sr_instance* sr,
         int len_ether_ip = sizeof(sr_ethernet_hdr_t) + sizeof(sr_ip_hdr_t);
         if (len < len_ether_ip) {
             fprintf(stderr, "Failed to handle packet, insufficient length.\n");
+            return;
         }
+        sr_ip_hdr_t* iphdr_rcv = (sr_ip_hdr_t*)(packet + sizeof(sr_ethernet_hdr_t));
+        uint8_t ttl = iphdr_rcv->ip_ttl;
+        if (ttl <= 0) { /* TODO 0 */
+            fprintf(stderr, "Failed to handle packet, invalid TTL.\n");
+            struct sr_if* iface = sr_get_interface(sr, interface);
+            if (iface == NULL) {
+                fprintf(stderr, "Failed to handle packet, invalid interface.\n");
+                return;
+            }
+            uint8_t* icmp_time_exceed_frame = (uint8_t*)malloc(ETHER_HDR_LEN + IP_HDR_LEN + ICMP_HDR_LEN);
+            /* ethernet */
+            set_ether_hdr(icmp_time_exceed_frame, ehdr->ether_shost, iface->addr, htons(ethertype_ip));
+            /* ip */
+            set_ip_hdr(icmp_time_exceed_frame + ETHER_HDR_LEN, 0, htons(IP_HDR_LEN + ICMP_HDR_LEN), \
+                        htons(0), htons(0), 64, ip_protocol_icmp, \
+                        iface->ip, iphdr_rcv->ip_src);
+            /* icmp */
+            set_icmp_hdr(icmp_time_exceed_frame + ETHER_HDR_LEN + IP_HDR_LEN, 11, 0);
+
+            sr_send_packet(sr, icmp_time_exceed_frame, ETHER_HDR_LEN + IP_HDR_LEN + ICMP_HDR_LEN, interface);
+            return;
+        }
+        uint8_t ip_protocol = iphdr_rcv->ip_p;
+        printf("ip TTL: %d\n", ttl);
+        printf("ip protocol: %d\n", ip_protocol);
     }
 
 }/* end sr_ForwardPacket */
