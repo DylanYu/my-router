@@ -102,23 +102,69 @@ void sr_handlepacket(struct sr_instance* sr,
         sr_arp_hdr_t* arp_hdr = (sr_arp_hdr_t*)(packet + sizeof(sr_ethernet_hdr_t));
         unsigned short ar_op = ntohs(arp_hdr->ar_op);
         if (ar_op == arp_op_request) {
-            printf("%s\n", "Arp Request");
+            printf("%s\n", "Handle Arp Request");
             /* in fact this transform isn't necessary cause if_list store ip with transform*/
             uint32_t tip = ntohl(arp_hdr->ar_tip);
-            print_addr_ip_int(tip);
             struct sr_if* iface = sr->if_list;
             while (iface != NULL) {
+                /* target is me */
                 if (tip == ntohl(iface->ip)) {
-                    /* target is me */
-                    printf("this is me.\n");
-                    sr_arp_hdr_t* reply = (sr_arp_hdr_t*)malloc(sizeof(sr_arp_hdr_t));
-                    /* TODO */
+                    /* Arp */
+                    sr_arp_hdr_t* arp_response = (sr_arp_hdr_t*)malloc(sizeof(sr_arp_hdr_t));		
+                    arp_response->ar_hrd = arp_hdr->ar_hrd;
+                    arp_response->ar_pro = arp_hdr->ar_pro;
+                    arp_response->ar_hln = arp_hdr->ar_hln;
+                    arp_response->ar_pln = arp_hdr->ar_pln;
+                    arp_response->ar_op = htons(arp_op_reply);
+                    int i;
+                    for (i = 0; i < ETHER_ADDR_LEN; i++)
+                        arp_response->ar_sha[i] = iface->addr[i];
+                    arp_response->ar_sip = iface->ip;
+                    for (i = 0; i < ETHER_ADDR_LEN; i++)
+                        arp_response->ar_tha[i] = arp_hdr->ar_sha[i];
+                    arp_response->ar_tip = arp_hdr->ar_sip;
+
+                    /* Ethernet */
+                    sr_ethernet_hdr_t* ether_response = (sr_ethernet_hdr_t*)malloc(sizeof(sr_ethernet_hdr_t));
+                    for (i = 0; i < ETHER_ADDR_LEN; i++)
+                        ether_response->ether_dhost[i] = arp_hdr->ar_sha[i];
+                    for (i = 0; i < ETHER_ADDR_LEN; i++)
+                        ether_response->ether_shost[i] = iface->addr[i];
+                    ether_response->ether_type = ehdr->ether_type;
+
+                    /* merge */
+                    char* response = (char*)malloc(len_ether_arp);
+                    memcpy(response, ether_response, sizeof(sr_ethernet_hdr_t));
+                    memcpy(response + sizeof(sr_ethernet_hdr_t), arp_response, sizeof(sr_arp_hdr_t));
+                    free(ether_response);
+                    free(arp_response);
+
+                    printf("print my header\n");
+                    print_hdrs(response, len_ether_arp);
+                    printf("interface: %s\n", interface);
+
+                    printf("===SENDING===\n");
+                    sr_send_packet(sr, response, len_ether_arp, interface);
                     break;
                 }
                 iface = iface->next;
             }
         }
         else if (ar_op == arp_op_reply) {
+            printf("Handle Arp Reply.\n");
+            sr_arp_hdr_t* arp_reply = (sr_arp_hdr_t*)malloc(sizeof(sr_arp_hdr_t));
+            uint32_t tip = arp_reply->ar_tip;
+            struct sr_if* iface = sr->if_list;
+            while (iface != NULL) {
+                /* target is me */
+                if (tip == iface->ip) {
+                    ;
+                    break;
+                }
+                iface = iface->next;
+            }
+
+            free(arp_reply);
         }
 
     }
