@@ -80,7 +80,55 @@ void sr_handlepacket(struct sr_instance* sr,
 
   /* fill in code here */
     print_hdrs(packet, len);
+
+    printf("%s\n", "--------My print-------");
+    sr_ethernet_hdr_t* ehdr = (sr_ethernet_hdr_t*)packet;
+    uint16_t ether_type = ntohs(ehdr->ether_type);
+    printf("Type: %04X\n", ether_type);
+    uint8_t* dst = ehdr->ether_dhost;
+    uint8_t* src = ehdr->ether_shost;
+    printf("Dst mac: %02X:%02X:%02X:%02X:%02X:%02X\n", *dst, *(dst+1), *(dst+2), *(dst+3), *(dst+4), *(dst+5));
+    printf("Src mac: %02X:%02X:%02X:%02X:%02X:%02X\n", src[0], src[1], src[2], src[3], src[4], src[5]);
     printf("Interface: %s.\n", interface);
+
+    if (ether_type == ethertype_arp) {
+        printf("%s\n", "This is an ARP packet.");
+        int len_ether_arp = sizeof(sr_ethernet_hdr_t) + sizeof(sr_arp_hdr_t);
+        if (len < len_ether_arp) {
+            fprintf(stderr, "Failed to handle packet, insufficient length.\n");
+            return;
+        }
+        /* handle arp */
+        sr_arp_hdr_t* arp_hdr = (sr_arp_hdr_t*)(packet + sizeof(sr_ethernet_hdr_t));
+        unsigned short ar_op = ntohs(arp_hdr->ar_op);
+        if (ar_op == arp_op_request) {
+            printf("%s\n", "Arp Request");
+            /* in fact this transform isn't necessary cause if_list store ip with transform*/
+            uint32_t tip = ntohl(arp_hdr->ar_tip);
+            print_addr_ip_int(tip);
+            struct sr_if* iface = sr->if_list;
+            while (iface != NULL) {
+                if (tip == ntohl(iface->ip)) {
+                    /* target is me */
+                    printf("this is me.\n");
+                    sr_arp_hdr_t* reply = (sr_arp_hdr_t*)malloc(sizeof(sr_arp_hdr_t));
+                    /* TODO */
+                    break;
+                }
+                iface = iface->next;
+            }
+        }
+        else if (ar_op == arp_op_reply) {
+        }
+
+    }
+    else if (ether_type == ethertype_ip) {
+        printf("%s\n", "This is an IP packet.\n");
+        int len_ether_ip = sizeof(sr_ethernet_hdr_t) + sizeof(sr_ip_hdr_t);
+        if (len < len_ether_ip) {
+            fprintf(stderr, "Failed to handle packet, insufficient length.\n");
+        }
+    }
 
 }/* end sr_ForwardPacket */
 
