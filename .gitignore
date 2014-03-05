@@ -1,3 +1,6 @@
 *~
 *.pyo
 *.pyc
+pox_module/cs144.egg-info/*
+*.d
+*.swp
