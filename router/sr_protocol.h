@@ -75,6 +75,11 @@
   #endif
 #endif
 #define ICMP_DATA_SIZE 28
+#define ETHER_HDR_LEN 14
+#define IP_HDR_LEN 20
+#define ARP_HDR_LEN 28
+#define ICMP_HDR_LEN 4
+#define ICMP_T3_HDR_LEN 36
 
 
 /* Structure of a ICMP header
