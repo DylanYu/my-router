@@ -83,100 +83,80 @@ void sr_handlepacket(struct sr_instance* sr,
     print_hdrs(packet, len);
 
     printf("%s\n", "--------My print-------");
-    sr_ethernet_hdr_t* ehdr = (sr_ethernet_hdr_t*)packet;
-    uint16_t ether_type = ntohs(ehdr->ether_type);
-    printf("Type: %04X\n", ether_type);
-    uint8_t* dst = ehdr->ether_dhost;
-    uint8_t* src = ehdr->ether_shost;
-    printf("Dst mac: %02X:%02X:%02X:%02X:%02X:%02X\n", *dst, *(dst+1), *(dst+2), *(dst+3), *(dst+4), *(dst+5));
-    printf("Src mac: %02X:%02X:%02X:%02X:%02X:%02X\n", src[0], src[1], src[2], src[3], src[4], src[5]);
+    sr_ethernet_hdr_t* rcv_ehdr = (sr_ethernet_hdr_t*)packet;
+    uint16_t rcv_ether_type = ntohs(rcv_ehdr->ether_type);
     printf("Interface: %s.\n", interface);
 
-    if (ether_type == ethertype_arp) {
+    struct sr_if* iface = sr_get_interface(sr, interface);
+    if (iface == NULL) {
+        fprintf(stderr, "Failed to handle packet, invalid interface.\n");
+        return;
+    }
+
+    if (rcv_ether_type == ethertype_arp) {
         printf("%s\n", "This is an ARP packet.");
-        int len_ether_arp = sizeof(sr_ethernet_hdr_t) + sizeof(sr_arp_hdr_t);
+        int len_ether_arp = ETHER_HDR_LEN + ARP_HDR_LEN;
         if (len < len_ether_arp) {
             fprintf(stderr, "Failed to handle packet, insufficient length.\n");
             return;
         }
-        /* handle arp */
-        sr_arp_hdr_t* arp_hdr = (sr_arp_hdr_t*)(packet + sizeof(sr_ethernet_hdr_t));
-        unsigned short ar_op = ntohs(arp_hdr->ar_op);
-        if (ar_op == arp_op_request) {
-            printf("%s\n", "Handle Arp Request");
-            /* in fact this transform isn't necessary cause if_list store ip with transform*/
-            uint32_t tip = ntohl(arp_hdr->ar_tip);
-            struct sr_if* iface = sr->if_list;
-            while (iface != NULL) {
-                /* target is me */
-                if (tip == ntohl(iface->ip)) {
-                    uint8_t* arp_reply_frame = (uint8_t*)malloc(ETHER_HDR_LEN + ARP_HDR_LEN);
-                    /* ethernet */
-                    set_ether_hdr(arp_reply_frame, arp_hdr->ar_sha, iface->addr, ehdr->ether_type);
-                    /* arp */
-                    set_arp_hdr(arp_reply_frame + ETHER_HDR_LEN, arp_hdr->ar_hrd, arp_hdr->ar_pro, \
-                                arp_hdr->ar_hln, arp_hdr->ar_pln, htons(arp_op_reply), \
-                                iface->addr, iface->ip, arp_hdr->ar_sha, arp_hdr->ar_sip);
-
-                    printf("print my header\n");
-                    print_hdrs(arp_reply_frame, len_ether_arp);
-                    printf("interface: %s\n", interface);
-
-                    printf("===SENDING===\n");
-                    sr_send_packet(sr, arp_reply_frame, len_ether_arp, interface);
-                    break;
-                }
-                iface = iface->next;
-            }
+        sr_arp_hdr_t* rcv_arhdr = (sr_arp_hdr_t*)(packet + ETHER_HDR_LEN);
+        if (rcv_arhdr->ar_tip != iface->ip) {
+            fprintf(stderr, "Will not handle packet, this packet is not targeted to me.\n");
+            return;
         }
-        else if (ar_op == arp_op_reply) {
+
+        unsigned short rcv_ar_op = ntohs(rcv_arhdr->ar_op);
+        if (rcv_ar_op == arp_op_request) {
+            printf("%s\n", "Handle Arp Request");
+            uint8_t* arp_reply_frame = (uint8_t*)malloc(ETHER_HDR_LEN + ARP_HDR_LEN);
+            /* ethernet */
+            set_ether_hdr(arp_reply_frame, rcv_arhdr->ar_sha, iface->addr, htons(ethertype_arp));
+            /* arp */
+            set_arp_hdr(arp_reply_frame + ETHER_HDR_LEN, rcv_arhdr->ar_hrd, rcv_arhdr->ar_pro, \
+                        rcv_arhdr->ar_hln, rcv_arhdr->ar_pln, htons(arp_op_reply), \
+                        iface->addr, iface->ip, rcv_arhdr->ar_sha, rcv_arhdr->ar_sip);
+
+            printf("print my header\n");
+            print_hdrs(arp_reply_frame, len_ether_arp);
+            printf("interface: %s\n", interface);
+
+            printf("===SENDING===\n");
+            sr_send_packet(sr, arp_reply_frame, len_ether_arp, interface);
+        } else if (rcv_ar_op == arp_op_reply) {
             printf("Handle Arp Reply.\n");
             sr_arp_hdr_t* arp_reply = (sr_arp_hdr_t*)malloc(sizeof(sr_arp_hdr_t));
-            uint32_t tip = arp_reply->ar_tip;
-            struct sr_if* iface = sr->if_list;
-            while (iface != NULL) {
-                /* target is me */
-                if (tip == iface->ip) {
-                    printf("Arp reply on me...\n");
-                    break;
-                }
-                iface = iface->next;
-            }
 
             free(arp_reply);
+        } else {
+            fprintf(stderr, "Failed to handle packet. unknown ARP type.\n");
+            return;
         }
-
-    }
-    else if (ether_type == ethertype_ip) {
+    } else if (rcv_ether_type == ethertype_ip) {
         printf("%s\n", "This is an IP packet.\n");
-        int len_ether_ip = sizeof(sr_ethernet_hdr_t) + sizeof(sr_ip_hdr_t);
+        int len_ether_ip = ETHER_HDR_LEN + IP_HDR_LEN;
         if (len < len_ether_ip) {
             fprintf(stderr, "Failed to handle packet, insufficient length.\n");
             return;
         }
-        sr_ip_hdr_t* iphdr_rcv = (sr_ip_hdr_t*)(packet + sizeof(sr_ethernet_hdr_t));
-        uint8_t ttl = iphdr_rcv->ip_ttl;
-        if (ttl <= 0) { /* TODO 0 */
+        sr_ip_hdr_t* rcv_iphdr = (sr_ip_hdr_t*)(packet + ETHER_HDR_LEN);
+        uint8_t ttl = rcv_iphdr->ip_ttl;
+        if (ttl <= 0) {
             fprintf(stderr, "Failed to handle packet, invalid TTL.\n");
-            struct sr_if* iface = sr_get_interface(sr, interface);
-            if (iface == NULL) {
-                fprintf(stderr, "Failed to handle packet, invalid interface.\n");
-                return;
-            }
             uint8_t* icmp_time_exceed_frame = (uint8_t*)malloc(ETHER_HDR_LEN + IP_HDR_LEN + ICMP_HDR_LEN);
             /* ethernet */
-            set_ether_hdr(icmp_time_exceed_frame, ehdr->ether_shost, iface->addr, htons(ethertype_ip));
+            set_ether_hdr(icmp_time_exceed_frame, rcv_ehdr->ether_shost, iface->addr, htons(ethertype_ip));
             /* ip */
             set_ip_hdr(icmp_time_exceed_frame + ETHER_HDR_LEN, 0, htons(IP_HDR_LEN + ICMP_HDR_LEN), \
                         htons(0), htons(0), 64, ip_protocol_icmp, \
-                        iface->ip, iphdr_rcv->ip_src);
+                        iface->ip, rcv_iphdr->ip_src);
             /* icmp */
             set_icmp_hdr(icmp_time_exceed_frame + ETHER_HDR_LEN + IP_HDR_LEN, 11, 0);
 
             sr_send_packet(sr, icmp_time_exceed_frame, ETHER_HDR_LEN + IP_HDR_LEN + ICMP_HDR_LEN, interface);
             return;
         }
-        uint8_t ip_protocol = iphdr_rcv->ip_p;
+        uint8_t ip_protocol = rcv_iphdr->ip_p;
         printf("ip TTL: %d\n", ttl);
         printf("ip protocol: %d\n", ip_protocol);
     }
