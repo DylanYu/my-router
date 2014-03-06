@@ -3,7 +3,30 @@
 #include <string.h>
 #include "sr_protocol.h"
 #include "sr_utils.h"
+#include "sr_router.h"
+#include "const.h"
 
+
+int is_dst(struct sr_instance* sr, uint8_t* buf) {
+    uint32_t tip = 0;
+    sr_ethernet_hdr_t* ehdr = (sr_ethernet_hdr_t*)buf;
+    uint16_t ether_type = ntohs(ehdr->ether_type);
+    if (ether_type == ethertype_arp) {
+        sr_arp_hdr_t* arhdr = (sr_arp_hdr_t*)(buf + ETHER_HDR_LEN);
+        tip = arhdr->ar_tip;
+    } else if (ether_type == ethertype_ip) {
+        sr_ip_hdr_t* iphdr = (sr_ip_hdr_t*)(buf + ETHER_HDR_LEN);
+        tip = iphdr->ip_dst;
+    } else
+        return FALSE;
+    struct sr_if* iface = sr->if_list;
+    while (iface != NULL) {
+        if (iface->ip == tip)
+            return TRUE;
+        iface = iface->next;
+    }
+    return FALSE;
+}
 
 uint16_t cksum (const void *_data, int len) {
   const uint8_t *data = _data;
@@ -115,7 +138,7 @@ void print_hdr_icmp(uint8_t *buf) {
   fprintf(stderr, "\ttype: %d\n", icmp_hdr->icmp_type);
   fprintf(stderr, "\tcode: %d\n", icmp_hdr->icmp_code);
   /* Keep checksum in NBO */
-  fprintf(stderr, "\tchecksum: %d\n", icmp_hdr->icmp_sum);
+  fprintf(stderr, "\tchecksum: %x\n", ntohs(icmp_hdr->icmp_sum));
 }
 
 

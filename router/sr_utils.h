@@ -28,6 +28,10 @@
 #ifndef SR_UTILS_H
 #define SR_UTILS_H
 
+#include "sr_router.h"
+
+int is_dst(struct sr_instance* sr, uint8_t* buf);
+
 uint16_t cksum(const void *_data, int len);
 
 uint16_t ethertype(uint8_t *buf);

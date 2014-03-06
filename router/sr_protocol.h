@@ -78,7 +78,7 @@
 #define ETHER_HDR_LEN 14
 #define IP_HDR_LEN 20
 #define ARP_HDR_LEN 28
-#define ICMP_HDR_LEN 4
+#define ICMP_HDR_LEN 8
 #define ICMP_T3_HDR_LEN 36
 
 
@@ -88,6 +88,8 @@ struct sr_icmp_hdr {
   uint8_t icmp_type;
   uint8_t icmp_code;
   uint16_t icmp_sum;
+  uint16_t icmp_id;
+  uint16_t icmp_seq;
   
 } __attribute__ ((packed)) ;
 typedef struct sr_icmp_hdr sr_icmp_hdr_t;

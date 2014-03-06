@@ -18,7 +18,7 @@ void set_ip_hdr(uint8_t* sp, uint8_t tos, uint16_t len, uint16_t id, \
                 uint32_t src, uint32_t dst) {
     sr_ip_hdr_t* hdr = sp;
     hdr->ip_v = 4;
-    hdr->ip_hl = 4;
+    hdr->ip_hl = 5;
     hdr->ip_tos = tos;
     hdr->ip_len = len;
     hdr->ip_id = id;
@@ -49,10 +49,12 @@ void set_arp_hdr(uint8_t* sp, unsigned short hrd, unsigned short pro, \
     hdr->ar_tip = tip;
 }
 
-void set_icmp_hdr(uint8_t* sp, uint8_t type, uint8_t code) {
+void set_icmp_hdr(uint8_t* sp, uint8_t type, uint8_t code, uint16_t id, uint16_t seq) {
     sr_icmp_hdr_t* hdr = sp;
     hdr->icmp_type = type;
     hdr->icmp_code = code;
+    hdr->icmp_id = id;
+    hdr->icmp_seq = seq;
     hdr->icmp_sum = cksum(hdr, ICMP_HDR_LEN);
 }
 
