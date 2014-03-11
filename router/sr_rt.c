@@ -135,11 +135,11 @@ struct sr_rt* sr_get_rt_entry(struct sr_instance* sr, uint32_t ip) {
     struct sr_rt* rt = sr->routing_table;
     for (; rt != NULL; rt = rt->next) {
         /* TODO longest prefix match */
-        if (ip == *(uint32_t*)&rt->dest) {
+        uint32_t rt_ip = *(uint32_t*)(&(rt->dest));
+        if (ip == rt_ip)
             return rt;
-        }
     }
-    return NULL;
+    return sr->routing_table;
 }
 
 /*---------------------------------------------------------------------
