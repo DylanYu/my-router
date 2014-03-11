@@ -17,7 +17,42 @@
   See the comments in the header file for an idea of what it should look like.
 */
 void sr_arpcache_sweepreqs(struct sr_instance *sr) { 
-    /* Fill this in */
+    struct sr_arpreq* req = sr->cache.requests;
+    for (; req != NULL; req = req->next) {
+        handle_arpreq(sr, req);
+    }
+}
+
+void handle_arpreq(struct sr_instance* sr, struct sr_arpreq* req) {
+    time_t curtime = time(NULL);
+    if (curtime - req->sent > 1) {
+        if (req->times_sent >= 5) {
+            printf("Send times_sent >=5\n");
+            struct sr_packet* pkt = req->packets;
+            for (; pkt != NULL; pkt = pkt->next) {
+                /* send icmp dst host unreachable */
+                sr_ethernet_hdr_t* rcv_ehdr = (sr_ethernet_hdr_t*)pkt;
+                sr_ip_hdr_t* rcv_iphdr = (sr_ip_hdr_t*)(pkt + ETHER_HDR_LEN);
+                int ether_ip_icmp_len = ETHER_HDR_LEN + IP_HDR_LEN + ICMP_HDR_LEN;
+                uint8_t* icmp_host_urb_frame = (uint8_t*)calloc(1, ether_ip_icmp_len);
+                struct sr_if* iface = sr->if_list;
+                set_ether_hdr(icmp_host_urb_frame, rcv_ehdr->ether_shost, iface->addr, htons(ethertype_arp));
+                set_ip_hdr(icmp_host_urb_frame + ETHER_HDR_LEN, 0, \
+                        htons(IP_HDR_LEN + ICMP_HDR_LEN), rcv_iphdr->ip_id, \
+                        rcv_iphdr->ip_off, 64, ip_protocol_icmp, \
+                        iface->ip, rcv_iphdr->ip_src);
+                set_icmp_hdr(icmp_host_urb_frame + ETHER_HDR_LEN + IP_HDR_LEN, 3, 1, 0, 0);
+                sr_send_packet(sr, icmp_host_urb_frame, ether_ip_icmp_len, iface->name);
+            }
+            sr_arpreq_destroy(&(sr->cache), req);
+        }
+        else {
+            /* TODO send arp request */
+            printf("Will send arp request.\n");
+            req->sent = curtime;
+            req->times_sent++;
+        }
+    }
 }
 
 /* You should not need to touch the rest of this code. */

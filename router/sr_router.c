@@ -211,7 +211,10 @@ void sr_handlepacket(struct sr_instance* sr,
             ;
         } else { /* try forward */
             printf("Not the dest, try to forward.\n");
+            /* TODO look up routing table */
             uint32_t ip_dst = rcv_iphdr->ip_dst;
+            char* iface_name = sr_get_rt_entry(sr, rcv_iphdr->ip_dst)->interface;
+            struct sr_if* engress_iface = sr_get_interface(sr, iface_name);
             struct sr_arpentry* entry = sr_arpcache_lookup(&(sr->cache), ip_dst);
             if (entry == NULL) {
                 sr_arpcache_queuereq(&(sr->cache), ip_dst, packet, len, interface);
@@ -221,7 +224,7 @@ void sr_handlepacket(struct sr_instance* sr,
 
                 uint8_t* forward_packet = (uint8_t*)malloc(len);
                 memcpy(forward_packet + len_ether_ip, packet + len_ether_ip, len - len_ether_ip);
-                set_ether_hdr(forward_packet, next_hop_mac, iface->addr, htons(ethertype_ip));
+                set_ether_hdr(forward_packet, next_hop_mac, engress_iface->addr, htons(ethertype_ip));
                 set_ip_hdr(forward_packet + ETHER_HDR_LEN, \
                             rcv_iphdr->ip_tos, rcv_iphdr->ip_len, rcv_iphdr->ip_id, \
                             rcv_iphdr->ip_off, rcv_ttl - 1, rcv_iphdr->ip_p, \
