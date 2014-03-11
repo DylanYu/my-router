@@ -227,6 +227,7 @@ void sr_handlepacket(struct sr_instance* sr,
             struct sr_if* out_iface = sr_get_interface(sr, out_iface_name);
             struct sr_arpentry* entry = sr_arpcache_lookup(&(sr->cache), ip_dst);
             if (entry == NULL) {
+                printf("MAIN:Will send arp request\n");
                 struct sr_if* iface;
                 /* send arp req through every iface of the router */
                 for (iface = sr->if_list; iface != NULL; iface = iface->next) {

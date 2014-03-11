@@ -40,7 +40,7 @@ void dcrs_ip_ttl(uint8_t* sp) {
 void set_arp_hdr(uint8_t* sp, unsigned short hrd, unsigned short pro, \
                 unsigned char hln, unsigned char pln, unsigned short op, \
                 unsigned char sha[], uint32_t sip, \
-                unsigned tha[], uint32_t tip) {
+                unsigned char tha[], uint32_t tip) {
     sr_arp_hdr_t* hdr = sp;
     hdr->ar_hrd = hrd;
     hdr->ar_pro = pro;
