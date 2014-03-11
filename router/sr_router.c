@@ -111,7 +111,7 @@ void sr_handlepacket(struct sr_instance* sr,
             /* ethernet */
             set_ether_hdr(arp_reply_frame, rcv_arhdr->ar_sha, iface->addr, htons(ethertype_arp));
             /* arp */
-            set_arp_hdr(arp_reply_frame + ETHER_HDR_LEN, rcv_arhdr->ar_hrd, rcv_arhdr->ar_pro, \
+            set_arp_hdr(arp_reply_frame + ETHER_HDR_LEN, htons(1), rcv_arhdr->ar_pro, \
                         rcv_arhdr->ar_hln, rcv_arhdr->ar_pln, htons(arp_op_reply), \
                         iface->addr, iface->ip, rcv_arhdr->ar_sha, rcv_arhdr->ar_sip);
 
@@ -123,9 +123,13 @@ void sr_handlepacket(struct sr_instance* sr,
             sr_send_packet(sr, arp_reply_frame, len_ether_arp, interface);
         } else if (rcv_ar_op == arp_op_reply) {
             printf("Handle Arp Reply.\n");
-            sr_arp_hdr_t* arp_reply = (sr_arp_hdr_t*)calloc(1, sizeof(sr_arp_hdr_t));
-
-            free(arp_reply);
+            struct sr_arpreq* req = sr_arpcache_insert(&(sr->cache), rcv_arhdr->ar_sha, rcv_arhdr->ar_sip);
+            if (req != NULL) {
+                struct sr_packet* pkt;
+                for(pkt = req->packets; pkt != NULL; pkt = pkt->next)
+                    sr_send_packet(sr, pkt->buf, pkt->len, pkt->iface);
+            }
+            sr_arpreq_destroy(&(sr->cache), req);
         } else {
             fprintf(stderr, "Failed to handle packet. unknown ARP type.\n");
             return;
@@ -207,6 +211,26 @@ void sr_handlepacket(struct sr_instance* sr,
             ;
         } else { /* try forward */
             printf("Not the dest, try to forward.\n");
+            uint32_t ip_dst = rcv_iphdr->ip_dst;
+            struct sr_arpentry* entry = sr_arpcache_lookup(&(sr->cache), ip_dst);
+            if (entry == NULL) {
+                sr_arpcache_queuereq(&(sr->cache), ip_dst, packet, len, interface);
+            } else {
+                /*uint32_t next_hop_ip = entry->ip;*/
+                unsigned char* next_hop_mac = entry->mac;
+
+                uint8_t* forward_packet = (uint8_t*)malloc(len);
+                memcpy(forward_packet + len_ether_ip, packet + len_ether_ip, len - len_ether_ip);
+                set_ether_hdr(forward_packet, next_hop_mac, iface->addr, htons(ethertype_ip));
+                set_ip_hdr(forward_packet + ETHER_HDR_LEN, \
+                            rcv_iphdr->ip_tos, rcv_iphdr->ip_len, rcv_iphdr->ip_id, \
+                            rcv_iphdr->ip_off, rcv_ttl - 1, rcv_iphdr->ip_p, \
+                            rcv_iphdr->ip_src , rcv_iphdr->ip_dst);
+                printf("Will forward this packet:::::::::::\n");
+                print_hdr_ip(forward_packet);
+                sr_send_packet(sr, forward_packet, len, interface);
+                free(entry);
+            }
         }
     }
 
