@@ -26,6 +26,8 @@ void sr_arpcache_sweepreqs(struct sr_instance *sr) {
 void handle_arpreq(struct sr_instance* sr, struct sr_arpreq* req) {
     time_t curtime = time(NULL);
     if (curtime - req->sent > 1) {
+        /* TODO determine which iface to use */
+        struct sr_if* iface = sr->if_list;
         if (req->times_sent >= 5) {
             printf("Send times_sent >=5\n");
             struct sr_packet* pkt = req->packets;
@@ -35,7 +37,6 @@ void handle_arpreq(struct sr_instance* sr, struct sr_arpreq* req) {
                 sr_ip_hdr_t* rcv_iphdr = (sr_ip_hdr_t*)(pkt + ETHER_HDR_LEN);
                 int ether_ip_icmp_len = ETHER_HDR_LEN + IP_HDR_LEN + ICMP_HDR_LEN;
                 uint8_t* icmp_host_urb_frame = (uint8_t*)calloc(1, ether_ip_icmp_len);
-                struct sr_if* iface = sr->if_list;
                 set_ether_hdr(icmp_host_urb_frame, rcv_ehdr->ether_shost, iface->addr, htons(ethertype_arp));
                 set_ip_hdr(icmp_host_urb_frame + ETHER_HDR_LEN, 0, \
                         htons(IP_HDR_LEN + ICMP_HDR_LEN), rcv_iphdr->ip_id, \
@@ -49,6 +50,20 @@ void handle_arpreq(struct sr_instance* sr, struct sr_arpreq* req) {
         else {
             /* TODO send arp request */
             printf("Will send arp request.\n");
+            uint8_t dhost[ETHER_ADDR_LEN];
+            int i;
+            for (i = 0; i < ETHER_ADDR_LEN; i++)
+                dhost[i] = 0xff;
+            for (iface = sr->if_list; iface != NULL; iface = iface->next) {
+                uint8_t* arpreq_frame = (uint8_t*)malloc(ETHER_HDR_LEN + ARP_HDR_LEN);
+                set_ether_hdr(arpreq_frame, dhost, iface->addr, htons(ethertype_arp));
+                set_arp_hdr(arpreq_frame + ETHER_HDR_LEN, htons(1), htons(0x0800), 6, 4, htons(1), \
+                        iface->addr, iface->ip, dhost, req->ip);
+                print_addr_eth(dhost);
+                printf("Sweep:: Will send this arp request.....\n");
+                print_hdrs(arpreq_frame, ETHER_HDR_LEN + ARP_HDR_LEN);
+                sr_send_packet(sr, arpreq_frame, ETHER_HDR_LEN + ARP_HDR_LEN, iface->name);
+            }
             req->sent = curtime;
             req->times_sent++;
         }
