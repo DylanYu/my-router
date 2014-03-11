@@ -16,6 +16,7 @@ void set_ether_hdr(uint8_t* sp, uint8_t dhost[], uint8_t shost[], \
 void set_ip_hdr(uint8_t* sp, uint8_t tos, uint16_t len, uint16_t id, \
                 uint16_t off, uint8_t ttl, uint8_t pro, \
                 uint32_t src, uint32_t dst) {
+    memset(sp +  10, 0 , 2);
     sr_ip_hdr_t* hdr = sp;
     hdr->ip_v = 4;
     hdr->ip_hl = 5;
@@ -28,6 +29,12 @@ void set_ip_hdr(uint8_t* sp, uint8_t tos, uint16_t len, uint16_t id, \
     hdr->ip_src = src;
     hdr->ip_dst = dst;
     hdr->ip_sum = cksum(hdr, IP_HDR_LEN);
+}
+
+void dcrs_ip_ttl(uint8_t* sp) {
+    sr_ip_hdr_t* hdr = sp;
+    set_ip_hdr(sp, hdr->ip_tos, hdr->ip_len, hdr->ip_id, hdr->ip_off, \
+                hdr->ip_ttl - 1, hdr->ip_p, hdr->ip_src, hdr->ip_dst);
 }
 
 void set_arp_hdr(uint8_t* sp, unsigned short hrd, unsigned short pro, \
@@ -50,6 +57,7 @@ void set_arp_hdr(uint8_t* sp, unsigned short hrd, unsigned short pro, \
 }
 
 void set_icmp_hdr(uint8_t* sp, uint8_t type, uint8_t code, uint16_t id, uint16_t seq) {
+    memset(sp + 2, 0, 6);
     sr_icmp_hdr_t* hdr = sp;
     hdr->icmp_type = type;
     hdr->icmp_code = code;
