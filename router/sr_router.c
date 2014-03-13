@@ -106,7 +106,8 @@ void sr_handlepacket(struct sr_instance* sr,
         sr_arp_hdr_t* rcv_arhdr = (sr_arp_hdr_t*)(packet + ETHER_HDR_LEN);
         unsigned short rcv_ar_op = ntohs(rcv_arhdr->ar_op);
         if (rcv_ar_op == arp_op_request) {
-            printf("%s\n", "Handle Arp Request");
+            /* handle arp request */
+            printf("%s\n", "Handle Arp Request.");
             uint8_t* arp_reply_frame = (uint8_t*)malloc(ETHER_HDR_LEN + ARP_HDR_LEN);
             /* ethernet */
             set_ether_hdr(arp_reply_frame, rcv_arhdr->ar_sha, iface->addr, htons(ethertype_arp));
@@ -115,7 +116,7 @@ void sr_handlepacket(struct sr_instance* sr,
                         rcv_arhdr->ar_hln, rcv_arhdr->ar_pln, htons(arp_op_reply), \
                         iface->addr, iface->ip, rcv_arhdr->ar_sha, rcv_arhdr->ar_sip);
 
-            printf("print my header\n");
+            printf("print router's arp reply header:\n");
             print_hdrs(arp_reply_frame, len_ether_arp);
             printf("interface: %s\n", interface);
 
@@ -128,12 +129,19 @@ void sr_handlepacket(struct sr_instance* sr,
                 struct sr_packet* pkt;
                 for(pkt = req->packets; pkt != NULL; pkt = pkt->next) {
                     struct sr_if* out_iface = sr_get_interface(sr, pkt->iface);
-                    set_ether_hdr(pkt->buf, rcv_arhdr->ar_sha, out_iface->addr, ((sr_ethernet_hdr_t*)pkt->buf)->ether_type);
+                    if (out_iface->ip != rcv_arhdr->ar_tip)
+                        continue;
+                    set_ether_hdr(pkt->buf, rcv_arhdr->ar_sha, out_iface->addr,
+                                 ((sr_ethernet_hdr_t*)(pkt->buf))->ether_type);
                     dcrs_ip_ttl(pkt->buf + ETHER_HDR_LEN);
-                    printf("Send pending packet (due to arp wait)\n");
+                    printf("Send pending packet (due to arp reply received)\n");
                     sr_send_packet(sr, pkt->buf, pkt->len, pkt->iface);
                 }
                 sr_arpreq_destroy(&(sr->cache), req);
+            } else {
+                /* received an arp reply but no corresponding packet waiting 
+                for it. Just cache the arp entry, which is already done. */
+                ;
             }
         } else {
             fprintf(stderr, "Failed to handle packet. unknown ARP type.\n");
@@ -217,7 +225,10 @@ void sr_handlepacket(struct sr_instance* sr,
         } else { /* try forward */
             printf("Not the dest, try to forward.\n");
             uint32_t ip_dst = rcv_iphdr->ip_dst;
+            /* TODO longest prefix match, current solution is astray 
+            because wrong rt_entry is returned when no matching */
             struct sr_rt* rt_entry = sr_get_rt_entry(sr, ip_dst);
+            /* no route to the destination IP */
             if (rt_entry == NULL) {
                 fprintf(stderr, "Failed to handle packet, no routing table entry matched.\n");
                 /* TODO reply icmp */
@@ -225,9 +236,9 @@ void sr_handlepacket(struct sr_instance* sr,
             }
             char* out_iface_name = rt_entry->interface;
             struct sr_if* out_iface = sr_get_interface(sr, out_iface_name);
-            struct sr_arpentry* entry = sr_arpcache_lookup(&(sr->cache), ip_dst);
-            if (entry == NULL) {
-                printf("MAIN:Will send arp request\n");
+            struct sr_arpentry* arp_entry = sr_arpcache_lookup(&(sr->cache), ip_dst);
+            if (arp_entry == NULL) {
+                printf("Will queue some arp requests.\n");
                 struct sr_if* iface;
                 /* send arp req through every iface of the router */
                 for (iface = sr->if_list; iface != NULL; iface = iface->next) {
@@ -235,19 +246,16 @@ void sr_handlepacket(struct sr_instance* sr,
                 }
             } else {
                 /*uint32_t next_hop_ip = entry->ip;*/
-                unsigned char* next_hop_mac = entry->mac;
+                unsigned char* next_hop_mac = arp_entry->mac;
 
                 uint8_t* forward_packet = (uint8_t*)calloc(1, len);
                 memcpy(forward_packet + len_ether_ip, packet + len_ether_ip, len - len_ether_ip);
                 set_ether_hdr(forward_packet, next_hop_mac, out_iface->addr, htons(ethertype_ip));
-                set_ip_hdr(forward_packet + ETHER_HDR_LEN, \
-                            rcv_iphdr->ip_tos, rcv_iphdr->ip_len, rcv_iphdr->ip_id, \
-                            rcv_iphdr->ip_off, rcv_ttl - 1, rcv_iphdr->ip_p, \
-                            rcv_iphdr->ip_src , rcv_iphdr->ip_dst);
+                dcrs_ip_ttl(forward_packet + ETHER_HDR_LEN);
                 printf("Will forward this packet:::::::::::\n");
                 print_hdrs(forward_packet, len);
                 sr_send_packet(sr, forward_packet, len, out_iface_name);
-                free(entry);
+                free(arp_entry);
             }
         }
     }
