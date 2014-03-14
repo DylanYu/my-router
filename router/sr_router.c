@@ -166,21 +166,40 @@ void sr_handlepacket(struct sr_instance* sr,
             return;
         }
 
+        int len_ether_ip_icmp = ETHER_HDR_LEN + IP_HDR_LEN + ICMP_HDR_LEN;
+        int len_ether_ip_icmpt3 = len_ether_ip_icmp + ICMP_DATA_SIZE;
+
+        /* non-IP packet received, send icmp port unreachable, 
+           without considering ttl exceed */
+        if (is_dst(sr, packet) && rcv_ip_p != ip_protocol_icmp) {
+            fprintf(stderr, "Failed to handle packet, UDP or TCP payload received as dest.\n");
+            uint8_t* icmp_port_urb_frame = (uint8_t*)malloc(len_ether_ip_icmpt3);
+            set_ether_hdr(icmp_port_urb_frame, rcv_ehdr->ether_shost, iface->addr, htons(ethertype_ip));
+            set_ip_hdr(icmp_port_urb_frame + ETHER_HDR_LEN, 
+                    0, htons(IP_HDR_LEN + ICMP_T3_HDR_LEN), htons(0), htons(0), 64, 
+                    ip_protocol_icmp, iface->ip, rcv_iphdr->ip_src);
+            set_icmp_t3_hdr(icmp_port_urb_frame + ETHER_HDR_LEN + IP_HDR_LEN, 
+                    3, 3, 0, packet + ETHER_HDR_LEN);
+            printf("Will send icmp port urb frame:\n");
+            print_hdrs(icmp_port_urb_frame, len_ether_ip_icmpt3);
+            sr_send_packet(sr, icmp_port_urb_frame, len_ether_ip_icmpt3, interface);
+            return;
+        }
+
         /* time exceeded */
-        if (rcv_ttl <= 0) {
+        if (rcv_ttl <= 1) {
             fprintf(stderr, "Failed to handle packet, invalid TTL.\n");
-            uint8_t* icmp_time_exceed_frame = (uint8_t*)calloc(1, ETHER_HDR_LEN + IP_HDR_LEN + ICMP_HDR_LEN);
+            uint8_t* icmp_time_exceed_frame = (uint8_t*)calloc(1, len_ether_ip_icmpt3);
             /* ethernet */
             set_ether_hdr(icmp_time_exceed_frame, rcv_ehdr->ether_shost, iface->addr, htons(ethertype_ip));
             /* ip */
-            set_ip_hdr(icmp_time_exceed_frame + ETHER_HDR_LEN, 0, htons(IP_HDR_LEN + ICMP_HDR_LEN), \
+            set_ip_hdr(icmp_time_exceed_frame + ETHER_HDR_LEN, 0, htons(IP_HDR_LEN + ICMP_T3_HDR_LEN), \
                         htons(0), htons(0), 64, ip_protocol_icmp, \
                         iface->ip, rcv_iphdr->ip_src);
-            /* icmp */
-            /* TODO randomize id, rewrite seq */
-            set_icmp_hdr(icmp_time_exceed_frame + ETHER_HDR_LEN + IP_HDR_LEN, 11, 0, 0, 0);
+            /* icmp t3 */
+            set_icmp_t3_hdr(icmp_time_exceed_frame + ETHER_HDR_LEN + IP_HDR_LEN, 11, 0, 0, packet + ETHER_HDR_LEN);
 
-            sr_send_packet(sr, icmp_time_exceed_frame, ETHER_HDR_LEN + IP_HDR_LEN + ICMP_HDR_LEN, interface);
+            sr_send_packet(sr, icmp_time_exceed_frame, len_ether_ip_icmpt3, interface);
             return;
         }
 
@@ -217,11 +236,21 @@ void sr_handlepacket(struct sr_instance* sr,
                     return;
                 }
             } else {
+                printf("Dead code actually.\n");
+                /*
                 fprintf(stderr, "Failed to handle packet, UDP or TCP payload received as dest.\n");
-                /* TODO send icmp port unreachable back */
-                return;
+                uint8_t* icmp_port_urb_frame = (uint8_t*)malloc(len_ether_ip_icmpt3);
+                set_ether_hdr(icmp_port_urb_frame, rcv_ehdr->ether_shost, iface->addr, htons(ethertype_ip));
+                set_ip_hdr(icmp_port_urb_frame + ETHER_HDR_LEN, 
+                    0, htons(IP_HDR_LEN + ICMP_T3_HDR_LEN), htons(0), htons(0), 64, 
+                    ip_protocol_icmp, iface->ip, rcv_iphdr->ip_src);
+                set_icmp_t3_hdr(icmp_port_urb_frame + ETHER_HDR_LEN + IP_HDR_LEN, 
+                        3, 3, 0, packet + ETHER_HDR_LEN);
+                printf("Will send icmp port urb frame:\n");
+                print_hdrs(icmp_port_urb_frame, len_ether_ip_icmpt3);
+                sr_send_packet(sr, icmp_port_urb_frame, len_ether_ip_icmpt3, interface);
+                return;*/
             }
-            ;
         } else { /* try forward */
             printf("Not the dest, try to forward.\n");
             uint32_t ip_dst = rcv_iphdr->ip_dst;
