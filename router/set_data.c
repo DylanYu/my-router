@@ -66,3 +66,12 @@ void set_icmp_hdr(uint8_t* sp, uint8_t type, uint8_t code, uint16_t id, uint16_t
     hdr->icmp_sum = cksum(hdr, ICMP_HDR_LEN);
 }
 
+void set_icmp_t3_hdr(uint8_t* sp, uint8_t type, uint8_t code, uint16_t next_mtu, uint8_t* data) {
+    memset(sp + 2, 0, 6);
+    sr_icmp_t3_hdr_t* hdr = sp;
+    hdr->icmp_type = type;
+    hdr->icmp_code = code;
+    hdr->next_mtu = next_mtu;
+    memcpy(sp + 8, data, ICMP_DATA_SIZE);
+    hdr->icmp_sum = cksum(hdr, ICMP_T3_HDR_LEN);
+}

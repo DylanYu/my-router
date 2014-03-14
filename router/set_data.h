@@ -19,5 +19,6 @@ void set_arp_hdr(uint8_t* sp, unsigned short hrd, unsigned short pro, \
                 unsigned char sha[], uint32_t sip, \
                 unsigned char tha[], uint32_t tip);
 void set_icmp_hdr(uint8_t* sp, uint8_t type, uint8_t code, uint16_t id, uint16_t seq);
+void set_icmp_t3_hdr(uint8_t* sp, uint8_t type, uint8_t code, uint16_t next_mtu, uint8_t* data);
 
 #endif
