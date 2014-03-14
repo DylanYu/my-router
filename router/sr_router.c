@@ -278,7 +278,7 @@ void sr_handlepacket(struct sr_instance* sr,
                 unsigned char* next_hop_mac = arp_entry->mac;
 
                 uint8_t* forward_packet = (uint8_t*)calloc(1, len);
-                memcpy(forward_packet + len_ether_ip, packet + len_ether_ip, len - len_ether_ip);
+                memcpy(forward_packet + ETHER_HDR_LEN, packet + ETHER_HDR_LEN, len - ETHER_HDR_LEN);
                 set_ether_hdr(forward_packet, next_hop_mac, out_iface->addr, htons(ethertype_ip));
                 dcrs_ip_ttl(forward_packet + ETHER_HDR_LEN);
                 printf("Will forward this packet:::::::::::\n");
