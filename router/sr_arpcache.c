@@ -10,6 +10,7 @@
 #include "sr_router.h"
 #include "sr_if.h"
 #include "sr_protocol.h"
+#include "set_data.h"
 
 /* 
   This function gets called every second. For each request sent out, we keep
@@ -17,7 +18,63 @@
   See the comments in the header file for an idea of what it should look like.
 */
 void sr_arpcache_sweepreqs(struct sr_instance *sr) { 
-    /* Fill this in */
+    struct sr_arpreq* req = sr->cache.requests;
+    for (; req != NULL; req = req->next) {
+        handle_arpreq(sr, req);
+    }
+}
+
+void handle_arpreq(struct sr_instance* sr, struct sr_arpreq* req) {
+    time_t curtime = time(NULL);
+    if ((curtime - req->sent) > 1) {
+        if (req->times_sent >= 5) {
+            printf("times_sent >=5\n");
+            struct sr_packet* pkt = req->packets;
+            for (; pkt != NULL; pkt = pkt->next) {
+                /* TODO can not decide which iface the packet was received */
+                /* send icmp dst host unreachable (3, 1) */
+                sr_ethernet_hdr_t* rcv_ehdr = (sr_ethernet_hdr_t*)(pkt->buf);
+                sr_ip_hdr_t* rcv_iphdr = (sr_ip_hdr_t*)(pkt->buf + ETHER_HDR_LEN);
+                struct sr_if* iface = sr_get_interface(sr, pkt->iface);
+
+                int len_ether_ip_icmpt3 = ETHER_HDR_LEN + IP_HDR_LEN + ICMP_T3_HDR_LEN;
+                uint8_t* icmp_host_urb_frame = (uint8_t*)calloc(1, len_ether_ip_icmpt3);
+                set_ether_hdr(icmp_host_urb_frame, rcv_ehdr->ether_shost, 
+                                iface->addr, htons(ethertype_ip));
+                set_ip_hdr(icmp_host_urb_frame + ETHER_HDR_LEN, 0, \
+                        htons(IP_HDR_LEN + ICMP_T3_HDR_LEN), rcv_iphdr->ip_id, \
+                        rcv_iphdr->ip_off, 64, ip_protocol_icmp, \
+                        iface->ip, rcv_iphdr->ip_src);
+                set_icmp_t3_hdr(icmp_host_urb_frame + ETHER_HDR_LEN + IP_HDR_LEN, 
+                                3, 1, 0, pkt->buf + ETHER_HDR_LEN);
+                printf("Will send icmp host urb frame.\n");
+                /* ATTENTION: 
+                   Logically, send only from pkt's out going iface is not 
+                   enough, but as we have sent arp request from every iface 
+                   the router got, that's OK now. */
+                sr_send_packet(sr, icmp_host_urb_frame, len_ether_ip_icmpt3, pkt->iface);
+            }
+            sr_arpreq_destroy(&(sr->cache), req);
+        }
+        else {
+            uint8_t dhost[ETHER_ADDR_LEN];
+            int i;
+            for (i = 0; i < ETHER_ADDR_LEN; i++)
+                dhost[i] = 0xff;
+            struct sr_if* iface = sr->if_list;
+            for (iface = sr->if_list; iface != NULL; iface = iface->next) {
+                uint8_t* arpreq_frame = (uint8_t*)calloc(1, ETHER_HDR_LEN + ARP_HDR_LEN);
+                set_ether_hdr(arpreq_frame, dhost, iface->addr, htons(ethertype_arp));
+                set_arp_hdr(arpreq_frame + ETHER_HDR_LEN, htons(1), htons(0x0800), 6, 4, htons(1), \
+                        iface->addr, iface->ip, dhost, req->ip);
+                printf("Sweep:: Will send arp request.....\n");
+                /*print_hdrs(arpreq_frame, ETHER_HDR_LEN + ARP_HDR_LEN);*/
+                sr_send_packet(sr, arpreq_frame, ETHER_HDR_LEN + ARP_HDR_LEN, iface->name);
+            }
+            req->sent = curtime;
+            req->times_sent++;
+        }
+    }
 }
 
 /* You should not need to touch the rest of this code. */

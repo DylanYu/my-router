@@ -110,6 +110,8 @@ struct sr_arpcache {
    You must free the returned structure if it is not NULL. */
 struct sr_arpentry *sr_arpcache_lookup(struct sr_arpcache *cache, uint32_t ip);
 
+void handle_arpreq(struct sr_instance* sr, struct sr_arpreq* req);
+
 /* Adds an ARP request to the ARP request queue. If the request is already on
    the queue, adds the packet to the linked list of packets for this sr_arpreq
    that corresponds to this ARP request. The packet argument should not be

@@ -13,6 +13,8 @@
 
 #include <stdio.h>
 #include <assert.h>
+#include <stdlib.h>
+#include <string.h>
 
 
 #include "sr_if.h"
@@ -106,26 +108,42 @@ void sr_handlepacket(struct sr_instance* sr,
         sr_arp_hdr_t* rcv_arhdr = (sr_arp_hdr_t*)(packet + ETHER_HDR_LEN);
         unsigned short rcv_ar_op = ntohs(rcv_arhdr->ar_op);
         if (rcv_ar_op == arp_op_request) {
-            printf("%s\n", "Handle Arp Request");
+            /* handle arp request */
+            printf("%s\n", "Handle Arp Request.");
             uint8_t* arp_reply_frame = (uint8_t*)malloc(ETHER_HDR_LEN + ARP_HDR_LEN);
             /* ethernet */
             set_ether_hdr(arp_reply_frame, rcv_arhdr->ar_sha, iface->addr, htons(ethertype_arp));
             /* arp */
-            set_arp_hdr(arp_reply_frame + ETHER_HDR_LEN, rcv_arhdr->ar_hrd, rcv_arhdr->ar_pro, \
+            set_arp_hdr(arp_reply_frame + ETHER_HDR_LEN, htons(1), rcv_arhdr->ar_pro, \
                         rcv_arhdr->ar_hln, rcv_arhdr->ar_pln, htons(arp_op_reply), \
                         iface->addr, iface->ip, rcv_arhdr->ar_sha, rcv_arhdr->ar_sip);
 
-            printf("print my header\n");
+            printf("print router's arp reply header:\n");
             print_hdrs(arp_reply_frame, len_ether_arp);
-            printf("interface: %s\n", interface);
 
-            printf("===SENDING===\n");
+            printf("Send arp reply...\n");
             sr_send_packet(sr, arp_reply_frame, len_ether_arp, interface);
         } else if (rcv_ar_op == arp_op_reply) {
             printf("Handle Arp Reply.\n");
-            sr_arp_hdr_t* arp_reply = (sr_arp_hdr_t*)calloc(1, sizeof(sr_arp_hdr_t));
-
-            free(arp_reply);
+            struct sr_arpreq* req = sr_arpcache_insert(&(sr->cache), rcv_arhdr->ar_sha, rcv_arhdr->ar_sip);
+            if (req != NULL) {
+                struct sr_packet* pkt;
+                for(pkt = req->packets; pkt != NULL; pkt = pkt->next) {
+                    struct sr_if* out_iface = sr_get_interface(sr, pkt->iface);
+                    if (out_iface->ip != rcv_arhdr->ar_tip)
+                        continue;
+                    set_ether_hdr(pkt->buf, rcv_arhdr->ar_sha, out_iface->addr,
+                                 ((sr_ethernet_hdr_t*)(pkt->buf))->ether_type);
+                    dcrs_ip_ttl(pkt->buf + ETHER_HDR_LEN);
+                    printf("Send pending packet (due to arp reply received)\n");
+                    sr_send_packet(sr, pkt->buf, pkt->len, pkt->iface);
+                }
+                sr_arpreq_destroy(&(sr->cache), req);
+            } else {
+                /* received an arp reply but no corresponding packet waiting 
+                for it. Just cache the arp entry, which is already done. */
+                ;
+            }
         } else {
             fprintf(stderr, "Failed to handle packet. unknown ARP type.\n");
             return;
@@ -141,7 +159,6 @@ void sr_handlepacket(struct sr_instance* sr,
         uint8_t rcv_ttl = rcv_iphdr->ip_ttl;
         uint8_t rcv_ip_p = rcv_iphdr->ip_p;
         printf("ip TTL: %d\n", rcv_ttl);
-        printf("ip protocol: %d\n", rcv_ip_p);
 
         int ip_cksum = cksum(rcv_iphdr, IP_HDR_LEN);
         if (ip_cksum != 0xffff) {
@@ -149,64 +166,117 @@ void sr_handlepacket(struct sr_instance* sr,
             return;
         }
 
-        /* time exceeded */
-        if (rcv_ttl <= 0) {
-            fprintf(stderr, "Failed to handle packet, invalid TTL.\n");
-            uint8_t* icmp_time_exceed_frame = (uint8_t*)calloc(1, ETHER_HDR_LEN + IP_HDR_LEN + ICMP_HDR_LEN);
-            /* ethernet */
-            set_ether_hdr(icmp_time_exceed_frame, rcv_ehdr->ether_shost, iface->addr, htons(ethertype_ip));
-            /* ip */
-            set_ip_hdr(icmp_time_exceed_frame + ETHER_HDR_LEN, 0, htons(IP_HDR_LEN + ICMP_HDR_LEN), \
-                        htons(0), htons(0), 64, ip_protocol_icmp, \
-                        iface->ip, rcv_iphdr->ip_src);
-            /* icmp */
-            /* TODO randomize id, rewrite seq */
-            set_icmp_hdr(icmp_time_exceed_frame + ETHER_HDR_LEN + IP_HDR_LEN, 11, 0, 0, 0);
+        int len_ether_ip_icmp = ETHER_HDR_LEN + IP_HDR_LEN + ICMP_HDR_LEN;
+        int len_ether_ip_icmpt3 = len_ether_ip_icmp + ICMP_DATA_SIZE;
 
-            sr_send_packet(sr, icmp_time_exceed_frame, ETHER_HDR_LEN + IP_HDR_LEN + ICMP_HDR_LEN, interface);
+        /* non-IP packet received, send icmp port unreachable, 
+           without considering ttl exceed */
+        if (is_dst(sr, packet) && rcv_ip_p != ip_protocol_icmp) {
+            fprintf(stderr, "Failed to handle packet, UDP or TCP payload received as dest.\n");
+            uint8_t* icmp_port_urb_frame = (uint8_t*)malloc(len_ether_ip_icmpt3);
+            set_ether_hdr(icmp_port_urb_frame, rcv_ehdr->ether_shost, iface->addr, htons(ethertype_ip));
+            set_ip_hdr(icmp_port_urb_frame + ETHER_HDR_LEN, 
+                    0, htons(IP_HDR_LEN + ICMP_T3_HDR_LEN), htons(0), htons(0), 64, 
+                    ip_protocol_icmp, iface->ip, rcv_iphdr->ip_src);
+            set_icmp_t3_hdr(icmp_port_urb_frame + ETHER_HDR_LEN + IP_HDR_LEN, 
+                    3, 3, 0, packet + ETHER_HDR_LEN);
+            printf("Will send icmp port urb frame:\n");
+            print_hdrs(icmp_port_urb_frame, len_ether_ip_icmpt3);
+            sr_send_packet(sr, icmp_port_urb_frame, len_ether_ip_icmpt3, interface);
             return;
         }
 
-        if (is_dst(sr, packet)) { /* dest is me */
-            printf("I am the dest, try to handle.\n");
-            if (rcv_ip_p == ip_protocol_icmp) {
-                printf("Handle ICMP packet.\n");
-                sr_icmp_hdr_t* rcv_icmp_hdr = (sr_icmp_hdr_t*)(packet + ETHER_HDR_LEN + IP_HDR_LEN);
-                printf("type: %d, code: %d.\n", rcv_icmp_hdr->icmp_type, rcv_icmp_hdr->icmp_code);
-                /* TODO icmp cksum */
-                /*printf("icmp:\n");
-                print_hdr_icmp(rcv_icmp_hdr);
-                uint16_t ch_sum = cksum(rcv_icmp_hdr, ICMP_HDR_LEN - 4);
-                printf("icmp ch_sum: %x\n", ch_sum);*/
+        /* time exceeded */
+        if (rcv_ttl <= 1) {
+            fprintf(stderr, "Failed to handle packet, invalid TTL.\n");
+            uint8_t* icmp_time_exceed_frame = (uint8_t*)calloc(1, len_ether_ip_icmpt3);
+            /* ethernet */
+            set_ether_hdr(icmp_time_exceed_frame, rcv_ehdr->ether_shost, iface->addr, htons(ethertype_ip));
+            /* ip */
+            set_ip_hdr(icmp_time_exceed_frame + ETHER_HDR_LEN, 0, htons(IP_HDR_LEN + ICMP_T3_HDR_LEN), \
+                        htons(0), htons(0), 64, ip_protocol_icmp, \
+                        iface->ip, rcv_iphdr->ip_src);
+            /* icmp t3 */
+            set_icmp_t3_hdr(icmp_time_exceed_frame + ETHER_HDR_LEN + IP_HDR_LEN, 11, 0, 0, packet + ETHER_HDR_LEN);
+            sr_send_packet(sr, icmp_time_exceed_frame, len_ether_ip_icmpt3, interface);
+            return;
+        }
 
-                if (rcv_icmp_hdr->icmp_type == 8) { /* echo request */
-                    uint8_t* icmp_echo_reply_frame = (uint8_t*)calloc(1, len_ether_ip + ICMP_HDR_LEN);
-                    /* TODO issue arp request */
-                    set_ether_hdr(icmp_echo_reply_frame, \
-                                    rcv_ehdr->ether_shost, \
-                                    iface->addr, \
-                                    htons(ethertype_ip));
-                    set_ip_hdr(icmp_echo_reply_frame + ETHER_HDR_LEN, \
-                                0, htons(IP_HDR_LEN + ICMP_HDR_LEN), htons(0), \
-                                htons(0), 64, ip_protocol_icmp, \
-                                iface->ip, rcv_iphdr->ip_src);
-                    /* Identifier and Sequence number field (16 bits for each) are necessary */
-                    set_icmp_hdr(icmp_echo_reply_frame + len_ether_ip, 0, 0, rcv_icmp_hdr->icmp_id, rcv_icmp_hdr->icmp_seq);
+        /* destination is me and packet is ICMP */
+        if (is_dst(sr, packet) && rcv_ip_p == ip_protocol_icmp) {
+            printf("I am the ICMP dest, try to handle.\n");
+            sr_icmp_hdr_t* rcv_icmp_hdr = (sr_icmp_hdr_t*)(packet + ETHER_HDR_LEN + IP_HDR_LEN);
+            printf("type: %d, code: %d.\n", rcv_icmp_hdr->icmp_type, rcv_icmp_hdr->icmp_code);
 
-                    sr_send_packet(sr, icmp_echo_reply_frame, len_ether_ip + ICMP_HDR_LEN, interface);
-                    printf("==Send icmp echo reply packet==\n");
-                } else {
-                    fprintf(stderr, "Failed to handle packet, ICMP type unsupported.\n");
+            /* only handle icmp echo request */
+            if (rcv_icmp_hdr->icmp_type == 8) {
+                uint16_t icmp_cksum = cksum(rcv_icmp_hdr, len - ETHER_HDR_LEN - IP_HDR_LEN);
+                if (icmp_cksum != 0xffff) {
+                    fprintf(stderr, "Failed to handle packet, invalid icmp checksum.\n");
                     return;
                 }
+                uint8_t* icmp_echo_reply_frame = (uint8_t*)calloc(1, len_ether_ip + ICMP_HDR_LEN);
+                set_ether_hdr(icmp_echo_reply_frame, rcv_ehdr->ether_shost, 
+                                iface->addr, htons(ethertype_ip));
+                set_ip_hdr(icmp_echo_reply_frame + ETHER_HDR_LEN, 
+                            0, htons(IP_HDR_LEN + ICMP_HDR_LEN), htons(0), 
+                            htons(0), 64, ip_protocol_icmp, 
+                            iface->ip, rcv_iphdr->ip_src);
+                /* Identifier and Sequence number field (16 bits for each) are necessary */
+                set_icmp_hdr(icmp_echo_reply_frame + len_ether_ip, 0, 0, rcv_icmp_hdr->icmp_id, rcv_icmp_hdr->icmp_seq);
+                printf("Send icmp echo reply packet\n");
+                sr_send_packet(sr, icmp_echo_reply_frame, len_ether_ip + ICMP_HDR_LEN, interface);
             } else {
-                fprintf(stderr, "Failed to handle packet, UDP or TCP payload received as dest.\n");
-                /* TODO send icmp port unreachable bacl */
+                fprintf(stderr, "Failed to handle packet, unsupported icmp type.\n");
                 return;
             }
-            ;
         } else { /* try forward */
             printf("Not the dest, try to forward.\n");
+            uint32_t ip_dst = rcv_iphdr->ip_dst;
+            /* TODO longest prefix match, current solution is astray 
+            because wrong rt_entry is returned when no matching */
+            struct sr_rt* rt_entry = sr_get_rt_entry(sr, ip_dst);
+            /* no route to the destination IP */
+            if (rt_entry == NULL) {
+                fprintf(stderr, "Failed to handle packet, no routing table entry matched.\n");
+                /* reply icmp net urb (3, 0) */
+                int len_ether_ip_icmpt3 = ETHER_HDR_LEN + IP_HDR_LEN + ICMP_T3_HDR_LEN;
+                uint8_t* icmp_net_urb_frame = (uint8_t*)malloc(len_ether_ip_icmpt3);
+                set_ether_hdr(icmp_net_urb_frame, rcv_ehdr->ether_shost,
+                                iface->addr, htons(ethertype_ip));
+                set_ip_hdr(icmp_net_urb_frame + ETHER_HDR_LEN, 
+                        0, htons(IP_HDR_LEN + ICMP_T3_HDR_LEN), 
+                        rcv_iphdr->ip_id, rcv_iphdr->ip_off, 64, 
+                        ip_protocol_icmp, iface->ip, rcv_iphdr->ip_src);
+                set_icmp_t3_hdr(icmp_net_urb_frame + ETHER_HDR_LEN + IP_HDR_LEN, 
+                            3, 0, 0, packet + ETHER_HDR_LEN);
+                printf("Send icmp dest net unreachable.\n");
+                sr_send_packet(sr, icmp_net_urb_frame, len_ether_ip_icmpt3, interface);
+                return;
+            }
+            char* out_iface_name = rt_entry->interface;
+            struct sr_if* out_iface = sr_get_interface(sr, out_iface_name);
+            struct sr_arpentry* arp_entry = sr_arpcache_lookup(&(sr->cache), ip_dst);
+            if (arp_entry == NULL) {
+                printf("Will queue some arp requests.\n");
+                struct sr_if* iface;
+                /* send arp req through every iface of the router */
+                for (iface = sr->if_list; iface != NULL; iface = iface->next) {
+                    sr_arpcache_queuereq(&(sr->cache), ip_dst, packet, len, iface->name);
+                }
+            } else {
+                /*uint32_t next_hop_ip = entry->ip;*/
+                unsigned char* next_hop_mac = arp_entry->mac;
+
+                uint8_t* forward_packet = (uint8_t*)calloc(1, len);
+                memcpy(forward_packet + ETHER_HDR_LEN, packet + ETHER_HDR_LEN, len - ETHER_HDR_LEN);
+                set_ether_hdr(forward_packet, next_hop_mac, out_iface->addr, htons(ethertype_ip));
+                dcrs_ip_ttl(forward_packet + ETHER_HDR_LEN);
+                printf("Will forward this packet:::::::::::\n");
+                print_hdrs(forward_packet, len);
+                sr_send_packet(sr, forward_packet, len, out_iface_name);
+                free(arp_entry);
+            }
         }
     }
 
