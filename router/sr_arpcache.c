@@ -66,8 +66,8 @@ void handle_arpreq(struct sr_instance* sr, struct sr_arpreq* req) {
                 set_ether_hdr(arpreq_frame, dhost, iface->addr, htons(ethertype_arp));
                 set_arp_hdr(arpreq_frame + ETHER_HDR_LEN, htons(1), htons(0x0800), 6, 4, htons(1), \
                         iface->addr, iface->ip, dhost, req->ip);
-                printf("Sweep:: Will send this arp request.....\n");
-                print_hdrs(arpreq_frame, ETHER_HDR_LEN + ARP_HDR_LEN);
+                printf("Sweep:: Will send arp request.....\n");
+                /*print_hdrs(arpreq_frame, ETHER_HDR_LEN + ARP_HDR_LEN);*/
                 sr_send_packet(sr, arpreq_frame, ETHER_HDR_LEN + ARP_HDR_LEN, iface->name);
             }
             req->sent = curtime;
