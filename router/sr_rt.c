@@ -131,15 +131,46 @@ struct in_addr gw, struct in_addr mask,char* if_name)
 
 } /* -- sr_add_entry -- */
 
+int power(int base, int exp) {
+    int result = 1;
+    while (exp-- > 0)
+        result *= base;
+    return result;
+}
+
+int match(uint32_t ip1, uint32_t ip2) {
+    uint32_t xor = ntohl(ip1 ^ ip2);
+    int i;
+    for (i = 0; i <= 31; i++) {
+        if (xor >= power(2, 31 - i))
+            return i;
+    }
+    return i;
+}
+
+/**
+ * ip is in network type order
+ */
 struct sr_rt* sr_get_rt_entry(struct sr_instance* sr, uint32_t ip) {
     struct sr_rt* rt = sr->routing_table;
+    int max_match = 0;
+    struct sr_rt*  max_rt = NULL;
     for (; rt != NULL; rt = rt->next) {
-        /* TODO longest prefix match */
+        uint32_t rt_mask = *(uint32_t*)(&(rt->mask));
+        if (rt_mask == 0)
+            continue;
         uint32_t rt_ip = *(uint32_t*)(&(rt->dest));
-        if (ip == rt_ip)
-            return rt;
+        uint32_t masked_ip = rt_mask & ip;
+        int matched = match(rt_ip, masked_ip);
+        if (matched > max_match) {
+            max_match = matched;
+            max_rt = rt;
+        }
     }
-    return sr->routing_table;
+    if (max_match == 0)
+        return sr->routing_table;
+    else
+        return max_rt;
 }
 
 /*---------------------------------------------------------------------
