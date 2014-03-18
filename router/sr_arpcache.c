@@ -61,15 +61,20 @@ void handle_arpreq(struct sr_instance* sr, struct sr_arpreq* req) {
             int i;
             for (i = 0; i < ETHER_ADDR_LEN; i++)
                 dhost[i] = 0xff;
-            struct sr_if* iface = sr->if_list;
-            for (iface = sr->if_list; iface != NULL; iface = iface->next) {
+            /*struct sr_if* iface = sr->if_list;*/
+            /* TODO no need to send from all iface!!! */
+            /*for (iface = sr->if_list; iface != NULL; iface = iface->next) {*/
+            struct sr_packet* pkt = req->packets;
+            for (; pkt != NULL; pkt = pkt->next) {
                 uint8_t* arpreq_frame = (uint8_t*)calloc(1, ETHER_HDR_LEN + ARP_HDR_LEN);
-                set_ether_hdr(arpreq_frame, dhost, iface->addr, htons(ethertype_arp));
+                struct sr_if* out_iface = sr_get_interface(sr, pkt->iface);
+                set_ether_hdr(arpreq_frame, dhost, out_iface->addr, htons(ethertype_arp));
                 set_arp_hdr(arpreq_frame + ETHER_HDR_LEN, htons(1), htons(0x0800), 6, 4, htons(1), \
-                        iface->addr, iface->ip, dhost, req->ip);
+                        out_iface->addr, out_iface->ip, dhost, req->ip);
                 printf("Sweep:: Will send arp request.....\n");
                 /*print_hdrs(arpreq_frame, ETHER_HDR_LEN + ARP_HDR_LEN);*/
-                sr_send_packet(sr, arpreq_frame, ETHER_HDR_LEN + ARP_HDR_LEN, iface->name);
+                sr_send_packet(sr, arpreq_frame, ETHER_HDR_LEN + ARP_HDR_LEN, out_iface->name);
+            /*}*/
             }
             req->sent = curtime;
             req->times_sent++;

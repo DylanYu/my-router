@@ -132,9 +132,13 @@ void sr_handlepacket(struct sr_instance* sr,
                     struct sr_if* out_iface = sr_get_interface(sr, pkt->iface);
                     if (out_iface->ip != rcv_arhdr->ar_tip)
                         continue;
+
                     set_ether_hdr(pkt->buf, rcv_arhdr->ar_sha, out_iface->addr,
-                                 ((sr_ethernet_hdr_t*)(pkt->buf))->ether_type);
-                    dcrs_ip_ttl(pkt->buf + ETHER_HDR_LEN);
+                                 htons(ethertype_ip));
+                    sr_ip_hdr_t* tmp_iphdr = (sr_ip_hdr_t*)(pkt->buf + ETHER_HDR_LEN);
+                    /* if router is target, no need to decrease ttl */
+                    if (tmp_iphdr->ip_ttl != 255)
+                        dcrs_ip_ttl(pkt->buf + ETHER_HDR_LEN);
                     printf("Send pending packet (due to arp reply received)\n");
                     sr_send_packet(sr, pkt->buf, pkt->len, pkt->iface);
                 }
@@ -215,17 +219,28 @@ void sr_handlepacket(struct sr_instance* sr,
                     fprintf(stderr, "Failed to handle packet, invalid icmp checksum.\n");
                     return;
                 }
+                uint32_t ip_src = rcv_iphdr->ip_src;
+                /* prepare icmp echo reply frame without ethernet hdr set*/
                 uint8_t* icmp_echo_reply_frame = (uint8_t*)calloc(1, len_ether_ip + ICMP_HDR_LEN);
-                set_ether_hdr(icmp_echo_reply_frame, rcv_ehdr->ether_shost, 
-                                iface->addr, htons(ethertype_ip));
+                /* currently dst mac addr is unknown, wait for arp cache lookup */
                 set_ip_hdr(icmp_echo_reply_frame + ETHER_HDR_LEN, 
                             0, htons(IP_HDR_LEN + ICMP_HDR_LEN), htons(0), 
-                            htons(0), 64, ip_protocol_icmp, 
+                            htons(0), 255, ip_protocol_icmp, 
                             iface->ip, rcv_iphdr->ip_src);
                 /* Identifier and Sequence number field (16 bits for each) are necessary */
                 set_icmp_hdr(icmp_echo_reply_frame + len_ether_ip, 0, 0, rcv_icmp_hdr->icmp_id, rcv_icmp_hdr->icmp_seq);
-                printf("Send icmp echo reply packet\n");
-                sr_send_packet(sr, icmp_echo_reply_frame, len_ether_ip + ICMP_HDR_LEN, interface);
+
+                struct sr_arpentry* arp_entry = sr_arpcache_lookup(&(sr->cache), ip_src);
+                if (arp_entry == NULL) {
+                    /* queue arp request */
+                    /* TODO 3 necessary? */
+                    sr_arpcache_queuereq(&(sr->cache), ip_src, icmp_echo_reply_frame, len_ether_ip + ICMP_HDR_LEN, interface);
+                } else {
+                    set_ether_hdr(icmp_echo_reply_frame, arp_entry->mac, 
+                                    iface->addr, htons(ethertype_ip));
+                    printf("Send icmp echo reply packet\n");
+                    sr_send_packet(sr, icmp_echo_reply_frame, len_ether_ip + ICMP_HDR_LEN, interface);
+                }
             } else {
                 fprintf(stderr, "Failed to handle packet, unsupported icmp type.\n");
                 return;
@@ -255,16 +270,13 @@ void sr_handlepacket(struct sr_instance* sr,
                 return;
             }
             char* out_iface_name = rt_entry->interface;
-            struct sr_if* out_iface = sr_get_interface(sr, out_iface_name);
             struct sr_arpentry* arp_entry = sr_arpcache_lookup(&(sr->cache), ip_dst);
             if (arp_entry == NULL) {
                 printf("Will queue some arp requests.\n");
-                struct sr_if* iface;
-                /* send arp req through every iface of the router */
-                for (iface = sr->if_list; iface != NULL; iface = iface->next) {
-                    sr_arpcache_queuereq(&(sr->cache), ip_dst, packet, len, iface->name);
-                }
+                /* no need to send from all iface because out iface already decided by routing table */
+                sr_arpcache_queuereq(&(sr->cache), ip_dst, packet, len, out_iface_name);
             } else {
+                struct sr_if* out_iface = sr_get_interface(sr, out_iface_name);
                 /*uint32_t next_hop_ip = entry->ip;*/
                 unsigned char* next_hop_mac = arp_entry->mac;
 
