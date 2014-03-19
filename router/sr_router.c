@@ -233,7 +233,6 @@ void sr_handlepacket(struct sr_instance* sr,
                 struct sr_arpentry* arp_entry = sr_arpcache_lookup(&(sr->cache), ip_src);
                 if (arp_entry == NULL) {
                     /* queue arp request */
-                    /* TODO 3 necessary? */
                     sr_arpcache_queuereq(&(sr->cache), ip_src, icmp_echo_reply_frame, len_ether_ip + ICMP_HDR_LEN, interface);
                 } else {
                     set_ether_hdr(icmp_echo_reply_frame, arp_entry->mac, 
@@ -248,8 +247,7 @@ void sr_handlepacket(struct sr_instance* sr,
         } else { /* try forward */
             printf("Not the dest, try to forward.\n");
             uint32_t ip_dst = rcv_iphdr->ip_dst;
-            /* TODO longest prefix match, current solution is astray 
-            because wrong rt_entry is returned when no matching */
+            /* longest prefix match */
             struct sr_rt* rt_entry = sr_get_rt_entry(sr, ip_dst);
             /* no route to the destination IP */
             if (rt_entry == NULL) {

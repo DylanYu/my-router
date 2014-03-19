@@ -148,27 +148,41 @@ int match(uint32_t ip1, uint32_t ip2) {
     return i;
 }
 
+int get_mask_len(uint32_t mask) {
+    mask = ntohl(mask);
+    int i;
+    for (i = 0; i <= 32; i++) {
+        if (mask == 0)
+            return i;
+        mask <<= 1;
+    }
+    return 32;
+}
+
 /**
  * ip is in network type order
  */
 struct sr_rt* sr_get_rt_entry(struct sr_instance* sr, uint32_t ip) {
     struct sr_rt* rt = sr->routing_table;
     int max_match = 0;
+    int max_match_mask = 0;
     struct sr_rt*  max_rt = NULL;
     for (; rt != NULL; rt = rt->next) {
         uint32_t rt_mask = *(uint32_t*)(&(rt->mask));
         if (rt_mask == 0)
             continue;
+        int mask_len = get_mask_len(rt_mask);
         uint32_t rt_ip = *(uint32_t*)(&(rt->dest));
         uint32_t masked_ip = rt_mask & ip;
         int matched = match(rt_ip, masked_ip);
-        if (matched > max_match) {
+        if ((matched > max_match) || (matched == max_match && mask_len > max_match_mask)) {
             max_match = matched;
             max_rt = rt;
+            max_match_mask = mask_len;
         }
     }
     if (max_match == 0)
-        return sr->routing_table;
+        return NULL;
     else
         return max_rt;
 }
