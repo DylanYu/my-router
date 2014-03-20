@@ -25,6 +25,24 @@
 #include "sr_if.h"
 #include "sr_router.h"
 
+struct sr_if* sr_get_iface_by_addr(struct sr_instance* sr, uint8_t* addr) {
+    assert(sr);
+    assert(addr);
+    
+    struct sr_if* if_walker = sr->if_list;
+    while(if_walker) {
+        int i;
+        for (i= 0; i < ETHER_ADDR_LEN; i++) {
+            if ((if_walker->addr)[i] != addr[i])
+                break;
+        }
+        if (i == ETHER_ADDR_LEN)
+            return if_walker;
+        if_walker = if_walker->next;
+    }
+    return NULL;
+}
+
 /*--------------------------------------------------------------------- 
  * Method: sr_get_interface
  * Scope: Global

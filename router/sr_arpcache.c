@@ -26,16 +26,15 @@ void sr_arpcache_sweepreqs(struct sr_instance *sr) {
 
 void handle_arpreq(struct sr_instance* sr, struct sr_arpreq* req) {
     time_t curtime = time(NULL);
-    if ((curtime - req->sent) > 1) {
+    if ((curtime - req->sent) >= 1) {
         if (req->times_sent >= 5) {
             printf("times_sent >=5\n");
             struct sr_packet* pkt = req->packets;
             for (; pkt != NULL; pkt = pkt->next) {
-                /* TODO can not decide which iface the packet was received */
-                /* send icmp dst host unreachable (3, 1) */
+                /* send icmp dst host unreachable (3, 1) from incoming iface */
                 sr_ethernet_hdr_t* rcv_ehdr = (sr_ethernet_hdr_t*)(pkt->buf);
                 sr_ip_hdr_t* rcv_iphdr = (sr_ip_hdr_t*)(pkt->buf + ETHER_HDR_LEN);
-                struct sr_if* iface = sr_get_interface(sr, pkt->iface);
+                struct sr_if* iface = sr_get_iface_by_addr(sr, rcv_ehdr->ether_dhost);
 
                 int len_ether_ip_icmpt3 = ETHER_HDR_LEN + IP_HDR_LEN + ICMP_T3_HDR_LEN;
                 uint8_t* icmp_host_urb_frame = (uint8_t*)calloc(1, len_ether_ip_icmpt3);
@@ -48,11 +47,7 @@ void handle_arpreq(struct sr_instance* sr, struct sr_arpreq* req) {
                 set_icmp_t3_hdr(icmp_host_urb_frame + ETHER_HDR_LEN + IP_HDR_LEN, 
                                 3, 1, 0, pkt->buf + ETHER_HDR_LEN);
                 printf("Will send icmp host urb frame.\n");
-                /* ATTENTION: 
-                   Logically, send only from pkt's out going iface is not 
-                   enough, but as we have sent arp request from every iface 
-                   the router got, that's OK now. */
-                sr_send_packet(sr, icmp_host_urb_frame, len_ether_ip_icmpt3, pkt->iface);
+                sr_send_packet(sr, icmp_host_urb_frame, len_ether_ip_icmpt3, iface->name);
             }
             sr_arpreq_destroy(&(sr->cache), req);
         }
@@ -61,9 +56,7 @@ void handle_arpreq(struct sr_instance* sr, struct sr_arpreq* req) {
             int i;
             for (i = 0; i < ETHER_ADDR_LEN; i++)
                 dhost[i] = 0xff;
-            /*struct sr_if* iface = sr->if_list;*/
-            /* TODO no need to send from all iface!!! */
-            /*for (iface = sr->if_list; iface != NULL; iface = iface->next) {*/
+            /* no need to send from all iface */
             struct sr_packet* pkt = req->packets;
             for (; pkt != NULL; pkt = pkt->next) {
                 uint8_t* arpreq_frame = (uint8_t*)calloc(1, ETHER_HDR_LEN + ARP_HDR_LEN);
@@ -72,9 +65,7 @@ void handle_arpreq(struct sr_instance* sr, struct sr_arpreq* req) {
                 set_arp_hdr(arpreq_frame + ETHER_HDR_LEN, htons(1), htons(0x0800), 6, 4, htons(1), \
                         out_iface->addr, out_iface->ip, dhost, req->ip);
                 printf("Sweep:: Will send arp request.....\n");
-                /*print_hdrs(arpreq_frame, ETHER_HDR_LEN + ARP_HDR_LEN);*/
                 sr_send_packet(sr, arpreq_frame, ETHER_HDR_LEN + ARP_HDR_LEN, out_iface->name);
-            /*}*/
             }
             req->sent = curtime;
             req->times_sent++;
