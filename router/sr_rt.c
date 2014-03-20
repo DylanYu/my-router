@@ -21,6 +21,7 @@
 
 #include "sr_rt.h"
 #include "sr_router.h"
+#include "const.h"
 
 /*---------------------------------------------------------------------
  * Method:
@@ -138,25 +139,34 @@ int power(int base, int exp) {
     return result;
 }
 
-int match(uint32_t ip1, uint32_t ip2) {
-    uint32_t xor = ntohl(ip1 ^ ip2);
-    int i;
-    for (i = 0; i <= 31; i++) {
-        if (xor >= power(2, 31 - i))
-            return i;
-    }
-    return i;
+int is_match(uint32_t ip1, uint32_t ip2) {
+    uint32_t combine = ip1 | ~ip2;
+    if ((int)combine == -1)
+        return TRUE;
+    else
+        return FALSE;
 }
 
 int get_mask_len(uint32_t mask) {
-    mask = ntohl(mask);
     int i;
     for (i = 0; i <= 32; i++) {
         if (mask == 0)
             return i;
         mask <<= 1;
     }
-    return 32;
+    return -1;
+}
+
+/* Longest prefix match algorithm.
+ * All 32 bits address are in HOST byte order. 
+ */
+int LPM(uint32_t ip, uint32_t prefix, uint32_t mask) {
+    int mask_len = get_mask_len(mask);
+    uint32_t masked_ip = ip & mask;
+    if (is_match(masked_ip, prefix))
+        return mask_len;
+    else
+        return -1;
 }
 
 /**
@@ -164,24 +174,18 @@ int get_mask_len(uint32_t mask) {
  */
 struct sr_rt* sr_get_rt_entry(struct sr_instance* sr, uint32_t ip) {
     struct sr_rt* rt = sr->routing_table;
-    int max_match = 0;
-    int max_match_mask = 0;
+    int max_match = -1;
     struct sr_rt*  max_rt = NULL;
     for (; rt != NULL; rt = rt->next) {
         uint32_t rt_mask = *(uint32_t*)(&(rt->mask));
-        if (rt_mask == 0)
-            continue;
-        int mask_len = get_mask_len(rt_mask);
         uint32_t rt_ip = *(uint32_t*)(&(rt->dest));
-        uint32_t masked_ip = rt_mask & ip;
-        int matched = match(rt_ip, masked_ip);
-        if ((matched > max_match) || (matched == max_match && mask_len > max_match_mask)) {
+        int matched = LPM(ntohl(ip), ntohl(rt_ip), ntohl(rt_mask));
+        if (matched > max_match) {
             max_match = matched;
             max_rt = rt;
-            max_match_mask = mask_len;
         }
     }
-    if (max_match == 0)
+    if (max_match == -1)
         return NULL;
     else
         return max_rt;
