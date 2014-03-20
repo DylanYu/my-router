@@ -24,6 +24,7 @@
 #include "sr_arpcache.h"
 #include "sr_utils.h"
 #include "set_data.h"
+#include "const.h"
 
 /*---------------------------------------------------------------------
  * Method: sr_init(void)
@@ -173,25 +174,8 @@ void sr_handlepacket(struct sr_instance* sr,
         int len_ether_ip_icmp = ETHER_HDR_LEN + IP_HDR_LEN + ICMP_HDR_LEN;
         int len_ether_ip_icmpt3 = len_ether_ip_icmp + ICMP_DATA_SIZE;
 
-        /* non-IP packet received, send icmp port unreachable, 
-           without considering ttl exceed */
-        if (is_dst(sr, packet) && rcv_ip_p != ip_protocol_icmp) {
-            fprintf(stderr, "Failed to handle packet, UDP or TCP payload received as dest.\n");
-            uint8_t* icmp_port_urb_frame = (uint8_t*)malloc(len_ether_ip_icmpt3);
-            set_ether_hdr(icmp_port_urb_frame, rcv_ehdr->ether_shost, iface->addr, htons(ethertype_ip));
-            set_ip_hdr(icmp_port_urb_frame + ETHER_HDR_LEN, 
-                    0, htons(IP_HDR_LEN + ICMP_T3_HDR_LEN), htons(0), htons(0), 64, 
-                    ip_protocol_icmp, iface->ip, rcv_iphdr->ip_src);
-            set_icmp_t3_hdr(icmp_port_urb_frame + ETHER_HDR_LEN + IP_HDR_LEN, 
-                    3, 3, 0, packet + ETHER_HDR_LEN);
-            printf("Will send icmp port urb frame:\n");
-            print_hdrs(icmp_port_urb_frame, len_ether_ip_icmpt3);
-            sr_send_packet(sr, icmp_port_urb_frame, len_ether_ip_icmpt3, interface);
-            return;
-        }
-
         /* time exceeded */
-        if (rcv_ttl <= 1) {
+        if ((rcv_ttl <= 1 && !is_dst(sr, packet)) || rcv_ttl <= 0) {
             fprintf(stderr, "Failed to handle packet, invalid TTL.\n");
             uint8_t* icmp_time_exceed_frame = (uint8_t*)calloc(1, len_ether_ip_icmpt3);
             /* ethernet */
@@ -203,6 +187,23 @@ void sr_handlepacket(struct sr_instance* sr,
             /* icmp t3 */
             set_icmp_t3_hdr(icmp_time_exceed_frame + ETHER_HDR_LEN + IP_HDR_LEN, 11, 0, 0, packet + ETHER_HDR_LEN);
             sr_send_packet(sr, icmp_time_exceed_frame, len_ether_ip_icmpt3, interface);
+            return;
+        }
+
+        /* non-IP packet received, send icmp port unreachable, 
+           without considering ttl exceed */
+        if (is_dst(sr, packet) && rcv_ip_p != ip_protocol_icmp) {
+            fprintf(stderr, "Failed to handle packet, UDP or TCP payload received as dest.\n");
+            uint8_t* icmp_port_urb_frame = (uint8_t*)malloc(len_ether_ip_icmpt3);
+            set_ether_hdr(icmp_port_urb_frame, rcv_ehdr->ether_shost, iface->addr, htons(ethertype_ip));
+            set_ip_hdr(icmp_port_urb_frame + ETHER_HDR_LEN, 
+                    0, htons(IP_HDR_LEN + ICMP_T3_HDR_LEN), htons(0), htons(0), 64, 
+                    ip_protocol_icmp, rcv_iphdr->ip_dst, rcv_iphdr->ip_src);
+            set_icmp_t3_hdr(icmp_port_urb_frame + ETHER_HDR_LEN + IP_HDR_LEN, 
+                    3, 3, 0, packet + ETHER_HDR_LEN);
+            printf("Will send icmp port urb frame:\n");
+            print_hdrs(icmp_port_urb_frame, len_ether_ip_icmpt3);
+            sr_send_packet(sr, icmp_port_urb_frame, len_ether_ip_icmpt3, interface);
             return;
         }
 
@@ -219,26 +220,28 @@ void sr_handlepacket(struct sr_instance* sr,
                     fprintf(stderr, "Failed to handle packet, invalid icmp checksum.\n");
                     return;
                 }
-                uint32_t ip_src = rcv_iphdr->ip_src;
                 /* prepare icmp echo reply frame without ethernet hdr set*/
-                uint8_t* icmp_echo_reply_frame = (uint8_t*)calloc(1, len_ether_ip + ICMP_HDR_LEN);
+                uint8_t* icmp_echo_reply_frame = (uint8_t*)calloc(1, len);
                 /* currently dst mac addr is unknown, wait for arp cache lookup */
                 set_ip_hdr(icmp_echo_reply_frame + ETHER_HDR_LEN, 
-                            0, htons(IP_HDR_LEN + ICMP_HDR_LEN), htons(0), 
+                            0, htons(len - ETHER_HDR_LEN), htons(0), 
                             htons(0), 255, ip_protocol_icmp, 
-                            iface->ip, rcv_iphdr->ip_src);
+                            rcv_iphdr->ip_dst, rcv_iphdr->ip_src);
+                /* copy additional origin data */
+                if (len > len_ether_ip_icmp)
+                    memcpy(icmp_echo_reply_frame + len_ether_ip_icmp, packet + len_ether_ip_icmp, len - len_ether_ip_icmp);
                 /* Identifier and Sequence number field (16 bits for each) are necessary */
-                set_icmp_hdr(icmp_echo_reply_frame + len_ether_ip, 0, 0, rcv_icmp_hdr->icmp_id, rcv_icmp_hdr->icmp_seq);
+                set_icmp_hdr(icmp_echo_reply_frame + len_ether_ip, 0, 0, rcv_icmp_hdr->icmp_id, rcv_icmp_hdr->icmp_seq, len - ETHER_HDR_LEN - IP_HDR_LEN);
 
-                struct sr_arpentry* arp_entry = sr_arpcache_lookup(&(sr->cache), ip_src);
+                struct sr_arpentry* arp_entry = sr_arpcache_lookup(&(sr->cache), rcv_iphdr->ip_src);
                 if (arp_entry == NULL) {
                     /* queue arp request */
-                    sr_arpcache_queuereq(&(sr->cache), ip_src, icmp_echo_reply_frame, len_ether_ip + ICMP_HDR_LEN, interface);
+                    sr_arpcache_queuereq(&(sr->cache), rcv_iphdr->ip_src, icmp_echo_reply_frame, len, interface);
                 } else {
                     set_ether_hdr(icmp_echo_reply_frame, arp_entry->mac, 
                                     iface->addr, htons(ethertype_ip));
                     printf("Send icmp echo reply packet\n");
-                    sr_send_packet(sr, icmp_echo_reply_frame, len_ether_ip + ICMP_HDR_LEN, interface);
+                    sr_send_packet(sr, icmp_echo_reply_frame, len, interface);
                 }
             } else {
                 fprintf(stderr, "Failed to handle packet, unsupported icmp type.\n");

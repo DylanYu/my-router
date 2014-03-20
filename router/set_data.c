@@ -58,14 +58,14 @@ void set_arp_hdr(uint8_t* sp, unsigned short hrd, unsigned short pro, \
     hdr->ar_tip = tip;
 }
 
-void set_icmp_hdr(uint8_t* sp, uint8_t type, uint8_t code, uint16_t id, uint16_t seq) {
+void set_icmp_hdr(uint8_t* sp, uint8_t type, uint8_t code, uint16_t id, uint16_t seq, int icmp_len) {
     memset(sp + 2, 0, 6);
     sr_icmp_hdr_t* hdr = (sr_icmp_hdr_t*)sp;
     hdr->icmp_type = type;
     hdr->icmp_code = code;
     hdr->icmp_id = id;
     hdr->icmp_seq = seq;
-    hdr->icmp_sum = cksum(hdr, ICMP_HDR_LEN);
+    hdr->icmp_sum = cksum(hdr, icmp_len);
 }
 
 void set_icmp_t3_hdr(uint8_t* sp, uint8_t type, uint8_t code, uint16_t next_mtu, uint8_t* data) {
